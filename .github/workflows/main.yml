@@ -19,7 +19,8 @@ jobs:
         run: |
           mkdir -p xml
           unzip Gesetze.zip -d xml
-          mv xml/Gesetze/* xml/
+          ls xml/
+          mv xml/Gesetze/* xml/ || mv xml/gesetze/* xml/ || echo "mv failed"
           ls xml/ | head -5
       - name: Run embedding
         env:
