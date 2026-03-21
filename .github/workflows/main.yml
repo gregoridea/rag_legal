@@ -24,8 +24,9 @@ jobs:
 
       - name: Unzip Gesetze
         run: |
-          mkdir -p xml
-          unzip Gesetze.zip -d xml
+                mkdir -p xml
+                unzip Gesetze.zip -d xml
+                mv xml/Gesetze/* xml/
 
       - name: Run embedding
         env:
