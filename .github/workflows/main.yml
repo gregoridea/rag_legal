@@ -19,18 +19,17 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: |
-          pip install qdrant-client fastembed lxml
+        run: pip install qdrant-client fastembed lxml
 
       - name: Unzip Gesetze
         run: |
-                mkdir -p xml
-                unzip Gesetze.zip -d xml
-                mv xml/Gesetze/* xml/
+          mkdir -p xml
+          unzip Gesetze.zip -d xml
+          mv xml/Gesetze/* xml/
+          ls xml/ | head -5
 
       - name: Run embedding
         env:
           QDRANT_URL: ${{ secrets.QDRANT_URL }}
           QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
-        run: |
-          python embed.py
+        run: python embed.py
