@@ -1,0 +1,35 @@
+name: Wektoryzacja XML
+
+on:
+  push:
+    paths:
+      - 'zips/**'
+
+jobs:
+  embed:
+    runs-on: ubuntu-latest
+
+    env:
+      QDRANT_URL: ${{ secrets.QDRANT_URL }}
+      QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Wykryj plik ZIP
+        run: |
+          BATCH_FILE=$(ls zips/*.zip | head -n 1 | xargs basename)
+          echo "BATCH_FILE=$BATCH_FILE" >> $GITHUB_ENV
+          echo "📦 Paczka: $BATCH_FILE"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalacja zależności
+        run: pip install lxml qdrant-client fastembed
+
+      - name: Uruchom wektoryzację
+        run: python embed.py
