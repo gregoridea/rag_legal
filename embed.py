@@ -38,14 +38,18 @@ sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
 # Przetwarzanie każdego znalezionego ZIPa
 for zip_path in ZIP_FILES:
     ZIP_NAME = zip_path.name
-    extract_path = f"./temp_{ZIP_NAME}"
+    # Tworzymy bezpieczną nazwę folderu tymczasowego
+    extract_path = f"./temp_{ZIP_NAME.replace('.', '_')}"
     
     if os.path.exists(extract_path):
         shutil.rmtree(extract_path)
     
-    with zipfile.ZipFile(ZIP_NAME, 'r') as z:
+    # KLUCZOWA ZMIANA: Zmieniamy ZIP_NAME na zip_path
+    # zip_path zawiera w sobie "zips/data_5.zip", a nie tylko nazwę
+    with zipfile.ZipFile(zip_path, 'r') as z:
         z.extractall(extract_path)
-    print(f"📦 Rozpakowano {ZIP_NAME}")
+        
+    print(f"📦 Rozpakowano {ZIP_NAME} z folderu {ZIP_FOLDER}")
 
     all_files = list(pathlib.Path(extract_path).rglob("*.xml"))
     print(f"🚀 Startujemy z wektoryzacją {len(all_files)} plików z {ZIP_NAME}...")
