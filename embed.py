@@ -1,79 +1,98 @@
-import os, uuid, zipfile, pathlib
+import os, uuid, zipfile, pathlib, shutil
 from lxml import etree
 from qdrant_client import QdrantClient, models
-from fastembed import TextEmbedding, SparseTextEmbedding
+from sentence_transformers import SentenceTransformer
+from fastembed import SparseTextEmbedding
+from tqdm.auto import tqdm
+import torch
 
-COLLECTION   = "gesetze"
-DENSE_MODEL  = "mixedbread-ai/mxbai-embed-large-v1"
-SPARSE_MODEL = "Qdrant/bm25"
-CACHE_DIR    = "./models_cache"
-DENSE_DIM    = 1024
-BATCH_SIZE   = 10
+# ==========================================
+# 1. KONFIGURACJA (POBIERANA Z GITHUB SECRETS)
+# ==========================================
+QDRANT_URL     = os.environ.get("QDRANT_URL")
+QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY")
+COLLECTION     = "gesetze"
 
-os.environ["FASTEMBED_CACHE_PATH"] = CACHE_DIR
+# Skrypt automatycznie szuka pliku ZIP w folderze głównym
+ZIP_FILES = list(pathlib.Path(".").glob("*.zip"))
 
-workspace = pathlib.Path(os.getenv("GITHUB_WORKSPACE", "."))
-zip_name  = os.getenv("BATCH_FILE", "paczka_1.zip")
+if not QDRANT_URL or not QDRANT_API_KEY:
+    print("❌ BŁĄD: Brak zmiennych środowiskowych QDRANT_URL lub QDRANT_API_KEY!")
+    exit(1)
 
-with zipfile.ZipFile(workspace / "zips" / zip_name) as z:
-    z.extractall(workspace / "data")
+# ==========================================
+# 2. LOGIKA DZIAŁANIA
+# ==========================================
 
-all_files = [f for f in (workspace / "data").rglob("*.xml") if "models_cache" not in str(f)]
-print(f"📂 Znaleziono {len(all_files)} plików XML")
+client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
 
-client = QdrantClient(url=os.getenv("QDRANT_URL"), api_key=os.getenv("QDRANT_API_KEY"))
+# Detekcja urządzenia (GitHub Actions zawsze wybierze 'cpu')
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"🖥️ Urządzenie obliczeniowe: {device.upper()}")
 
-if not client.collection_exists(COLLECTION):
-    client.create_collection(
-        collection_name=COLLECTION,
-        vectors_config={"dense": models.VectorParams(size=DENSE_DIM, distance=models.Distance.COSINE)},
-        sparse_vectors_config={"sparse": models.SparseVectorParams()}
-    )
+# Modele (Identyczne jak w Colab, aby wektory pasowały)
+print("⏳ Ładowanie modeli (Dense i Sparse)...")
+dense_model = SentenceTransformer("mixedbread-ai/mxbai-embed-large-v1", device=device)
+sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
 
-dense_model  = TextEmbedding(model_name=DENSE_MODEL, cache_dir=CACHE_DIR)
-sparse_model = SparseTextEmbedding(model_name=SPARSE_MODEL, cache_dir=CACHE_DIR)
+# Przetwarzanie każdego znalezionego ZIPa
+for zip_path in ZIP_FILES:
+    ZIP_NAME = zip_path.name
+    extract_path = f"./temp_{ZIP_NAME}"
+    
+    if os.path.exists(extract_path):
+        shutil.rmtree(extract_path)
+    
+    with zipfile.ZipFile(ZIP_NAME, 'r') as z:
+        z.extractall(extract_path)
+    print(f"📦 Rozpakowano {ZIP_NAME}")
 
-for idx, file_path in enumerate(all_files):
-    try:
-        tree   = etree.parse(file_path, etree.XMLParser(recover=True))
-        jurabk = (tree.xpath('//jurabk/text()') or [file_path.name])[0]
-        title  = (tree.xpath('//titel/text()') or ["Gesetz"])[0]
+    all_files = list(pathlib.Path(extract_path).rglob("*.xml"))
+    print(f"🚀 Startujemy z wektoryzacją {len(all_files)} plików z {ZIP_NAME}...")
 
-        norms = [
-            {
-                "text": f"{(norm.xpath('.//enbez/text()') or [''])[0].strip()} {(norm.xpath('.//titel/text()') or [''])[0].strip()}: {' '.join(norm.xpath('.//textdaten//Content//P//text()')).strip()}".strip(),
-                "unit": (norm.xpath('.//enbez/text()') or [''])[0].strip(),
-                "doknr": norm.get('doknr') or "nodok"
-            }
-            for norm in tree.xpath('//norm')
-            if len(' '.join(norm.xpath('.//textdaten//Content//P//text()')).strip()) >= 5
-        ]
-
-        for start in range(0, len(norms), BATCH_SIZE):
-            batch       = norms[start:start + BATCH_SIZE]
-            texts       = [n["text"] for n in batch]
-            dense_vecs  = list(dense_model.embed(texts))
-            sparse_vecs = list(sparse_model.embed(texts))
-            client.upsert(
-                collection_name=COLLECTION,
-                points=[
-                    models.PointStruct(
-                        id=str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{jurabk}_{n['unit']}_{n['doknr']}")),
+    for file_path in tqdm(all_files, desc=f"Przetwarzanie {ZIP_NAME}"):
+        try:
+            tree = etree.parse(str(file_path), etree.XMLParser(recover=True))
+            jurabk = (tree.xpath('//jurabk/text()') or [file_path.name])[0]
+            
+            norms = []
+            for norm in tree.xpath('//norm'):
+                p_text = ' '.join(norm.xpath('.//textdaten//Content//P//text()')).strip()
+                if len(p_text) >= 5:
+                    norms.append({
+                        "text": p_text[:2500], 
+                        "unit": (norm.xpath('.//enbez/text()') or [''])[0]
+                    })
+            
+            if norms:
+                texts = [n["text"] for n in norms]
+                # Dense (na CPU będzie wolniej, ale matematycznie tak samo)
+                dv = dense_model.encode(texts, show_progress_bar=False)
+                # Sparse (zawsze na CPU)
+                sv = list(sparse_model.embed(texts))
+                
+                points = []
+                for i, n in enumerate(norms):
+                    point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{jurabk}_{i}_{file_path.name}"))
+                    points.append(models.PointStruct(
+                        id=point_id,
                         vector={
-                            "dense": dense_vecs[i].tolist(),
+                            "dense": dv[i].tolist(),
                             "sparse": models.SparseVector(
-                                indices=sparse_vecs[i].indices.tolist(),
-                                values=sparse_vecs[i].values.tolist()
+                                indices=sv[i].indices.tolist(), 
+                                values=sv[i].values.tolist()
                             )
                         },
-                        payload={**n, "jurabk": jurabk, "title": title, "source_file": file_path.name}
-                    )
-                    for i, n in enumerate(batch)
-                ]
-            )
-        print(f"[{idx+1}/{len(all_files)}] ✅ {file_path.name}")
+                        payload={"text": n["text"], "jurabk": jurabk, "unit": n["unit"]}
+                    ))
+                
+                client.upsert(collection_name=COLLECTION, points=points, wait=True)
+                
+        except Exception as e:
+            print(f"⚠️ Błąd w pliku {file_path.name}: {e}")
+    
+    # Sprzątanie po przetworzeniu ZIPa
+    shutil.rmtree(extract_path)
+    print(f"✅ Ukończono paczkę: {ZIP_NAME}")
 
-    except Exception as e:
-        print(f"❌ {file_path.name}: {e}")
-
-print("🏁 Zakończono.")
+print("\n🏁 KONIEC! Wszystkie ZIPy przetworzone.")
