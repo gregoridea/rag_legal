@@ -1,35 +1,30 @@
-name: Wektoryzacja XML
+name: Wektoryzacja ZIP do Qdrant
 
 on:
   push:
-    paths:
-      - 'zips/**'
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
-  embed:
+  build:
     runs-on: ubuntu-latest
-
-    env:
-      QDRANT_URL: ${{ secrets.QDRANT_URL }}
-      QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
-
     steps:
-      - name: Checkout repo
+      - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Wykryj plik ZIP
-        run: |
-          BATCH_FILE=$(ls zips/*.zip | head -n 1 | xargs basename)
-          echo "BATCH_FILE=$BATCH_FILE" >> $GITHUB_ENV
-          echo "📦 Paczka: $BATCH_FILE"
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
-      - name: Instalacja zależności
-        run: pip install lxml qdrant-client fastembed
+      - name: Install dependencies
+        run: |
+          pip install qdrant-client sentence-transformers fastembed lxml tqdm
+          pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
 
-      - name: Uruchom wektoryzację
-        run: python embed.py
+      - name: Run embedding script
+        env:
+          QDRANT_URL: ${{ secrets.QDRANT_URL }}
+          QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+        run: python embed_github.py
