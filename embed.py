@@ -13,8 +13,8 @@ QDRANT_URL     = os.environ.get("QDRANT_URL")
 QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY")
 COLLECTION     = "gesetze"
 
-# Skrypt automatycznie szuka pliku ZIP w folderze głównym
-ZIP_FILES = list(pathlib.Path(".").glob("*.zip"))
+ZIP_FOLDER = pathlib.Path("zips") 
+ZIP_FILES = list(ZIP_FOLDER.glob("*.zip")))
 
 if not QDRANT_URL or not QDRANT_API_KEY:
     print("❌ BŁĄD: Brak zmiennych środowiskowych QDRANT_URL lub QDRANT_API_KEY!")
