@@ -27,4 +27,4 @@ jobs:
         env:
           QDRANT_URL: ${{ secrets.QDRANT_URL }}
           QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
-        run: python embed_github.py
+        run: python embed.py
